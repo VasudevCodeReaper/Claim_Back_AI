@@ -1,0 +1,9 @@
+{
+  "name": "claimback-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Human-approved AI claim recovery workspace",
+  "scripts": { "dev": "vercel dev", "deploy": "vercel --prod" },
+  "engines": { "node": ">=20" }
+}
