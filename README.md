@@ -52,6 +52,10 @@ The app contains no fabricated claim or recovery data. For privacy, the receipt 
 
 TinyFish is started as a queued run and the UI polls its status, avoiding a serverless timeout while a policy page is inspected. It reads only the public URL supplied by the user. It will not log in, fill a form, or submit anything. For merchant submission later, add tested per-merchant workflows, an allowlist, an audit log, and a final user confirmation screen.
 
+## QA test scenario
+
+`api/demo-policy.js` deliberately serves a fictional public policy for an end-to-end QA run. It is labelled as a test policy and applies only to the ClaimBack sample receipt; do not use it for real claims. After deployment, use `https://YOUR-VERCEL-DOMAIN/api/demo-policy` as the policy URL with the supplied QA receipt, order ID `QA-ORDER-2026-1001`, amount `1299`, and issue `Product arrived damaged`.
+
 ## Security notes
 
 - Never expose `GEMINI_API_KEY` or `TINYFISH_API_KEY` to the browser.

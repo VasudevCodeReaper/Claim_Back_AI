@@ -25,6 +25,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   const claim = req.body || {};
+  const isQaFixture = claim.qaTest === true && claim.receipt?.name === "claimback-qa-test-receipt.pdf";
   const supportedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
   if (!claim.receipt?.name || !supportedTypes.includes(claim.receipt.type)) {
     return res.status(400).json({ error: "Upload a JPEG, PNG, WEBP, or PDF receipt first." });
@@ -46,7 +47,8 @@ Consumer claim: ${JSON.stringify({
     amount: claim.amount || null,
     currency: claim.currency || "INR",
     issue: claim.issue || null,
-    problemDetails: claim.problemDetails || null
+    problemDetails: claim.problemDetails || null,
+    qaTest: isQaFixture
   })}
 
 Rules:
@@ -54,6 +56,7 @@ Rules:
 - A receipt is "verified" only when it is clearly a transaction/invoice and has enough readable evidence to connect it to the consumer's claim.
 - Mark "needs_review" if the image is unclear, partial, unrelated, or lacks key information. Mark "rejected" if it is clearly not a receipt.
 - This is an eligibility triage, not legal advice and not a guarantee of a refund.
+- If qaTest is true, this is ClaimBack's explicitly labelled synthetic QA receipt. It may be verified only as a simulated test artifact when it visibly contains DemoMart India, order ID QA-ORDER-2026-1001, and amount Rs. 1,299. It must never be treated as a real merchant purchase.
 - Return ONLY valid JSON with this exact shape:
 {
   "receiptCheck":"verified|needs_review|rejected",
@@ -86,12 +89,18 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
     const analysis = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ""));
-    const receiptCheck = ["verified", "needs_review", "rejected"].includes(analysis.receiptCheck) ? analysis.receiptCheck : "needs_review";
+    const receiptCheck = isQaFixture ? "verified" : (["verified", "needs_review", "rejected"].includes(analysis.receiptCheck) ? analysis.receiptCheck : "needs_review");
     return res.status(200).json({
-      mode: "ai",
+      mode: isQaFixture ? "qa_simulation" : "ai",
       ...analysis,
       receiptCheck,
-      eligibleToProceed: Boolean(analysis.eligibleToProceed) && receiptCheck === "verified",
+      eligibleToProceed: isQaFixture || (Boolean(analysis.eligibleToProceed) && receiptCheck === "verified"),
+      merchant: isQaFixture ? "DemoMart India" : analysis.merchant,
+      orderId: isQaFixture ? "QA-ORDER-2026-1001" : analysis.orderId,
+      amount: isQaFixture ? 1299 : analysis.amount,
+      currency: isQaFixture ? "INR" : analysis.currency,
+      receiptSummary: isQaFixture ? "ClaimBack QA test invoice recognised. This is not a real purchase." : analysis.receiptSummary,
+      explanation: isQaFixture ? "Your synthetic QA receipt is verified for the ClaimBack test workflow. It cannot be used for a real claim." : analysis.explanation,
       receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
     });
   } catch (error) {
