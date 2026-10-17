@@ -20,7 +20,7 @@ function publicDiagnostic(error) {
     gemini_http_400: "Gemini rejected the receipt request. Check that GEMINI_MODEL supports PDF and image inputs.",
     gemini_http_401: "Gemini rejected the server API key. Create a fresh Gemini key in Google AI Studio, update GEMINI_API_KEY in Vercel, then redeploy.",
     gemini_http_403: "Gemini denied this server API key. Check its Gemini API restriction, project access, and quota in Google AI Studio.",
-    gemini_http_404: "The configured Gemini model was not found. Remove GEMINI_MODEL or set it to gemini-2.5-flash, then redeploy.",
+    gemini_http_404: "The configured Gemini model is not available. Set GEMINI_MODEL to gemini-3.8-flash, then redeploy.",
     gemini_http_429: "Gemini quota is currently exhausted. Check the Google AI Studio Usage page or wait for the quota window to reset.",
     gemini_http_500: "Gemini is temporarily unavailable. Please retry in a few minutes.",
     gemini_response_invalid: "Gemini responded, but not with a usable receipt assessment. Please retry once.",
@@ -42,6 +42,7 @@ export default async function handler(req, res) {
 
   const claim = req.body || {};
   const isQaFixture = claim.qaTest === true && claim.receipt?.name === "claimback-qa-test-receipt.pdf";
+  const extractionOnly = claim.intent === "extract_receipt";
   const supportedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
   if (!claim.receipt?.name || !supportedTypes.includes(claim.receipt.type)) {
     return res.status(400).json({ error: "Upload a JPEG, PNG, WEBP, or PDF receipt first." });
@@ -64,11 +65,13 @@ Consumer claim: ${JSON.stringify({
     currency: claim.currency || "INR",
     issue: claim.issue || null,
     problemDetails: claim.problemDetails || null,
+    intent: extractionOnly ? "extract visible receipt details for user review" : "verify evidence for a claim",
     qaTest: isQaFixture
   })}
 
 Rules:
 - Extract only facts visibly present in the receipt. Never invent an order ID, merchant, date, amount, or policy.
+- For transactionDate, return an unambiguous ISO date in YYYY-MM-DD format when it is visibly clear; otherwise return "Not visible". Return amount as a number with no currency symbols. Put a concise visible item/service description in itemSummary.
 - A receipt is "verified" only when it is clearly a transaction/invoice and has enough readable evidence to connect it to the consumer's claim.
 - Mark "needs_review" if the image is unclear, partial, unrelated, or lacks key information. Mark "rejected" if it is clearly not a receipt.
 - This is an eligibility triage, not legal advice and not a guarantee of a refund.
@@ -83,13 +86,14 @@ Rules:
   "amount":0,
   "currency":"INR",
   "transactionDate":"string or Not visible",
+  "itemSummary":"short visible item or service description, or Not visible",
   "category":"string",
   "receiptSummary":"short factual summary",
   "explanation":"short, honest explanation",
   "evidence":["three concise evidence items"],
   "nextAction":"one concise next step"
 }
-Set eligibleToProceed true only if receiptCheck is verified and the issue is plausible based on the supplied details.`;
+Set eligibleToProceed true only if receiptCheck is verified and the issue is plausible based on the supplied details. For an extraction-only request, set it true when the receipt itself is verified; the user will review every proposed value before continuing.`;
 
   try {
     const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
@@ -119,13 +123,14 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
       mode: isQaFixture ? "qa_simulation" : "ai",
       ...analysis,
       receiptCheck,
-      eligibleToProceed: isQaFixture || (Boolean(analysis.eligibleToProceed) && receiptCheck === "verified"),
+      eligibleToProceed: isQaFixture || (extractionOnly ? receiptCheck === "verified" : (Boolean(analysis.eligibleToProceed) && receiptCheck === "verified")),
       merchant: isQaFixture ? "DemoMart India" : analysis.merchant,
       orderId: isQaFixture ? "QA-ORDER-2026-1001" : analysis.orderId,
       amount: isQaFixture ? 1299 : analysis.amount,
       currency: isQaFixture ? "INR" : analysis.currency,
       receiptSummary: isQaFixture ? "ClaimBack QA test invoice recognised. This is not a real purchase." : analysis.receiptSummary,
       explanation: isQaFixture ? "Your synthetic QA receipt is verified for the ClaimBack test workflow. It cannot be used for a real claim." : analysis.explanation,
+      extractionOnly,
       receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
     });
   } catch (error) {

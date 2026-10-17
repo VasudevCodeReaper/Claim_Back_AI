@@ -30,7 +30,9 @@ function policyRequest({ portalUrl, ...claim }) {
     url: safeUrl.href,
     goal: policyGoal(claim),
     browser_profile: "lite",
-    agent_config: { max_duration_seconds: 55}
+    // `max_steps` is a TinyFish beta-only option. Keep the ordinary time bound
+    // so all TinyFish accounts can run this read-only policy check.
+    agent_config: { max_duration_seconds: 55 }
   };
 }
 
