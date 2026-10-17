@@ -14,6 +14,22 @@ const safeAssessment = (claim, reason) => ({
   nextAction: "Check the receipt details and try again."
 });
 
+function publicDiagnostic(error) {
+  const code = error?.diagnostic || "gemini_request_failed";
+  const messages = {
+    gemini_http_400: "Gemini rejected the receipt request. Check that GEMINI_MODEL supports PDF and image inputs.",
+    gemini_http_401: "Gemini rejected the server API key. Create a fresh Gemini key in Google AI Studio, update GEMINI_API_KEY in Vercel, then redeploy.",
+    gemini_http_403: "Gemini denied this server API key. Check its Gemini API restriction, project access, and quota in Google AI Studio.",
+    gemini_http_404: "The configured Gemini model was not found. Remove GEMINI_MODEL or set it to gemini-2.5-flash, then redeploy.",
+    gemini_http_429: "Gemini quota is currently exhausted. Check the Google AI Studio Usage page or wait for the quota window to reset.",
+    gemini_http_500: "Gemini is temporarily unavailable. Please retry in a few minutes.",
+    gemini_response_invalid: "Gemini responded, but not with a usable receipt assessment. Please retry once.",
+    gemini_network_error: "The server could not reach Gemini. Please retry in a few minutes.",
+    gemini_request_failed: "Receipt analysis is temporarily unavailable. No claim was created."
+  };
+  return { code, message: messages[code] || messages.gemini_request_failed };
+}
+
 function receiptPart(receipt) {
   if (!receipt?.dataUrl || !receipt?.type) return null;
   const match = receipt.dataUrl.match(/^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/);
@@ -85,10 +101,19 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
         generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
       })
     });
-    if (!response.ok) throw new Error("Receipt analysis request failed");
+    if (!response.ok) {
+      const providerBody = await response.text();
+      const diagnostic = `gemini_http_${response.status}`;
+      console.error("ClaimBack Gemini receipt check failed", { diagnostic, providerBody: providerBody.slice(0, 500) });
+      const error = new Error(diagnostic);
+      error.diagnostic = diagnostic;
+      throw error;
+    }
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-    const analysis = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ""));
+    let analysis;
+    try { analysis = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, "")); }
+    catch { const error = new Error("gemini_response_invalid"); error.diagnostic = "gemini_response_invalid"; throw error; }
     const receiptCheck = isQaFixture ? "verified" : (["verified", "needs_review", "rejected"].includes(analysis.receiptCheck) ? analysis.receiptCheck : "needs_review");
     return res.status(200).json({
       mode: isQaFixture ? "qa_simulation" : "ai",
@@ -104,6 +129,8 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
       receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
     });
   } catch (error) {
-    return res.status(200).json(safeAssessment(claim, "Receipt analysis is temporarily unavailable. No claim was created."));
+    const diagnostic = publicDiagnostic(error);
+    if (!error?.diagnostic) console.error("ClaimBack Gemini receipt check failed", { diagnostic: diagnostic.code, message: String(error?.message || error) });
+    return res.status(200).json({ ...safeAssessment(claim, diagnostic.message), diagnostic: diagnostic.code });
   }
 }
