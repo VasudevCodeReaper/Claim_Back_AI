@@ -1,33 +1,100 @@
-const fallback = (order) => ({
-  mode: "demo",
-  verdict: "Likely eligible",
-  confidence: 92,
-  amount: order.amount || 349,
-  currency: order.currency || "INR",
-  category: "Missing item",
-  explanation: "The order details indicate a missing paid item. ClaimBack has assembled the evidence and recommends a refund request.",
-  evidence: ["Invoice / order reference", "Reported missing item", "Merchant policy check queued"],
-  nextAction: "Review and approve a refund request"
+const safeAssessment = (claim, reason) => ({
+  mode: "safe_fallback",
+  receiptCheck: "needs_review",
+  eligibleToProceed: false,
+  confidence: 0,
+  merchant: claim.merchant || "Not verified",
+  orderId: claim.orderId || "Not verified",
+  amount: Number(claim.amount) || null,
+  currency: claim.currency || "INR",
+  category: claim.issue || "Not assessed",
+  receiptSummary: "Receipt could not be verified automatically.",
+  explanation: reason || "Add a clear receipt and try again. No claim can be created until the evidence is checked.",
+  evidence: ["Receipt uploaded by user", "Issue description provided"],
+  nextAction: "Check the receipt details and try again."
 });
+
+function receiptPart(receipt) {
+  if (!receipt?.dataUrl || !receipt?.type) return null;
+  const match = receipt.dataUrl.match(/^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  return { inlineData: { mimeType: match[1], data: match[2] } };
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
-  const order = req.body || {};
-  if (!process.env.GEMINI_API_KEY) return res.status(200).json(fallback(order));
-  const prompt = `You are ClaimBack, a consumer-claim assistant. Analyze the transaction below. Return ONLY valid JSON with: verdict, confidence (0-100), amount (number), currency, category, explanation, evidence (string array of 3), nextAction. Never invent a policy or advise fraud. Transaction: ${JSON.stringify(order)}`;
+
+  const claim = req.body || {};
+  const supportedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+  if (!claim.receipt?.name || !supportedTypes.includes(claim.receipt.type)) {
+    return res.status(400).json({ error: "Upload a JPEG, PNG, WEBP, or PDF receipt first." });
+  }
+  if (Number(claim.receipt.size) > 2_800_000) {
+    return res.status(400).json({ error: "Keep the receipt below 2.8 MB so it can be checked securely." });
+  }
+  const attachment = receiptPart(claim.receipt);
+  if (!attachment) return res.status(400).json({ error: "The receipt file could not be read. Try uploading it again." });
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(200).json(safeAssessment(claim, "AI receipt checking is not configured yet. Add GEMINI_API_KEY in Vercel."));
+  }
+
+  const prompt = `You are ClaimBack's receipt-verification assistant. Inspect the attached receipt and the consumer's claim.
+
+Consumer claim: ${JSON.stringify({
+    merchant: claim.merchant || null,
+    orderId: claim.orderId || null,
+    amount: claim.amount || null,
+    currency: claim.currency || "INR",
+    issue: claim.issue || null,
+    problemDetails: claim.problemDetails || null
+  })}
+
+Rules:
+- Extract only facts visibly present in the receipt. Never invent an order ID, merchant, date, amount, or policy.
+- A receipt is "verified" only when it is clearly a transaction/invoice and has enough readable evidence to connect it to the consumer's claim.
+- Mark "needs_review" if the image is unclear, partial, unrelated, or lacks key information. Mark "rejected" if it is clearly not a receipt.
+- This is an eligibility triage, not legal advice and not a guarantee of a refund.
+- Return ONLY valid JSON with this exact shape:
+{
+  "receiptCheck":"verified|needs_review|rejected",
+  "eligibleToProceed":true,
+  "confidence":0,
+  "merchant":"string or Not visible",
+  "orderId":"string or Not visible",
+  "amount":0,
+  "currency":"INR",
+  "transactionDate":"string or Not visible",
+  "category":"string",
+  "receiptSummary":"short factual summary",
+  "explanation":"short, honest explanation",
+  "evidence":["three concise evidence items"],
+  "nextAction":"one concise next step"
+}
+Set eligibleToProceed true only if receiptCheck is verified and the issue is plausible based on the supplied details.`;
+
   try {
     const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, responseMimeType: "application/json" } })
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, attachment] }],
+        generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+      })
     });
-    if (!response.ok) throw new Error("LLM request failed");
+    if (!response.ok) throw new Error("Receipt analysis request failed");
     const data = await response.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-    const clean = raw.replace(/^```json\s*|\s*```$/g, "");
-    res.status(200).json({ mode: "ai", ...JSON.parse(clean) });
+    const analysis = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, ""));
+    const receiptCheck = ["verified", "needs_review", "rejected"].includes(analysis.receiptCheck) ? analysis.receiptCheck : "needs_review";
+    return res.status(200).json({
+      mode: "ai",
+      ...analysis,
+      receiptCheck,
+      eligibleToProceed: Boolean(analysis.eligibleToProceed) && receiptCheck === "verified",
+      receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
+    });
   } catch (error) {
-    res.status(200).json({ ...fallback(order), warning: "AI analysis is temporarily unavailable; showing a safe demo assessment." });
+    return res.status(200).json(safeAssessment(claim, "Receipt analysis is temporarily unavailable. No claim was created."));
   }
 }
