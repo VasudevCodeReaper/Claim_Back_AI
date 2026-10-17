@@ -30,7 +30,7 @@ function policyRequest({ portalUrl, ...claim }) {
     url: safeUrl.href,
     goal: policyGoal(claim),
     browser_profile: "lite",
-    agent_config: { max_duration_seconds: 55, max_steps: 18 }
+    agent_config: { max_duration_seconds: 55}
   };
 }
 
