@@ -79,7 +79,21 @@ export default async function handler(req, res) {
       return res.status(200).json({ url: new URL(data.signedURL, baseUrl()).href, expiresInSeconds: 60 });
     }
 
-    return res.status(405).json({ error: "GET or POST only" });
+    if (req.method === "DELETE") {
+      const path = req.query?.path;
+      verifyOwner(path, user.id);
+      const response = await fetch(`${baseUrl()}/storage/v1/object/${BUCKET}/${objectPath(path)}`, {
+        method: "DELETE",
+        headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok && response.status !== 404) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || "Could not remove the private receipt.");
+      }
+      return res.status(200).json({ deleted: true });
+    }
+
+    return res.status(405).json({ error: "GET, POST, or DELETE only" });
   } catch (error) {
     return res.status(422).json({ error: error.message });
   }

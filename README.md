@@ -42,8 +42,8 @@ Open `http://localhost:3000`.
 | --- | --- |
 | `public/index.html` | Responsive receipt-upload, consent-first AI autofill, policy suggestion, evidence-check, and claim-approval interface |
 | `api/analyze.js` | Gemini multimodal receipt extraction and verification with a safe non-approval fallback |
-| `api/claim.js` | Queued TinyFish public-policy check and explicit claim-packet creation |
-| `api/auth.js`, `api/me.js`, and `api/claims.js` | Supabase-backed account sign-up, sign-in, protected session, and private claim history |
+| `api/claim.js` | Queued TinyFish public-policy check, policy snapshot, and explicit claim-packet creation |
+| `api/auth.js`, `api/me.js`, `api/claims.js`, and `api/claim-events.js` | Supabase-backed account sign-up, sign-in, private claim history, deletion, audit trail, user-confirmed submission, and recovery updates |
 
 ## Set up real accounts
 
@@ -52,9 +52,16 @@ Open `http://localhost:3000`.
 3. In Supabase **Project Settings → API**, copy the Project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY` in Vercel.
 4. In **SQL Editor**, run [`supabase/claims_schema.sql`](supabase/claims_schema.sql) once. This creates the private claims table and Row Level Security policies.
 5. Run [`supabase/secure_receipt_storage.sql`](supabase/secure_receipt_storage.sql) once. This creates the non-public receipt bucket and user-only Storage policies.
-6. Redeploy in Vercel.
+6. Run [`supabase/roadmap_features.sql`](supabase/roadmap_features.sql) once. This adds policy timestamps, the private audit trail, and user-confirmed submission/recovery states.
+7. Redeploy in Vercel.
 
 The app contains no fabricated claim or recovery data. Receipt binary data is only saved when a user explicitly saves a verified claim packet. It is stored in a non-public per-user Supabase Storage folder and opened only through a short-lived signed link. Deleting a claim packet deletes its timeline entry and private receipt.
+
+## Guided submission and audit trail
+
+ClaimBack now creates a reviewable submission draft from the user-approved claim packet. The user copies and submits it through the merchant's official channel themselves; ClaimBack never logs in to, contacts, or submits to a merchant. Afterward, the user can mark the claim as submitted and later record an amount actually received. Each event is written to a private per-user audit trail with the receipt-storage, policy-check, and explicit-confirmation events. The saved policy snapshot shows when it was checked and is flagged after 30 days so the user can review the merchant's current terms before acting.
+
+Claims created before these migrations remain available, but they cannot gain a historical receipt object or audit entries retroactively. Create a new QA claim to test the complete new flow.
 
 ## TinyFish rollout
 

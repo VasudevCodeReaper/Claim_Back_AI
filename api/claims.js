@@ -33,6 +33,10 @@ function present(row) {
     receiptContentType: row.receipt_content_type,
     receiptCheck: row.receipt_check,
     policyCheck: row.policy_check,
+    policyCheckedAt: row.policy_checked_at,
+    submittedAt: row.submitted_at,
+    recoveredAt: row.recovered_at,
+    recoveredAmount: row.recovered_amount,
     evidence: Array.isArray(row.evidence) ? row.evidence : [],
     created: new Date(row.created_at).toLocaleDateString("en-IN"),
     createdAt: row.created_at

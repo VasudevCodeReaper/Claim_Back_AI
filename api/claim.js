@@ -54,10 +54,31 @@ function presentClaim(row) {
     receiptContentType: row.receipt_content_type,
     receiptCheck: row.receipt_check,
     policyCheck: row.policy_check,
+    policyCheckedAt: row.policy_checked_at,
+    submittedAt: row.submitted_at,
+    recoveredAt: row.recovered_at,
+    recoveredAmount: row.recovered_amount,
     evidence: Array.isArray(row.evidence) ? row.evidence : [],
     created: new Date(row.created_at).toLocaleDateString("en-IN"),
     createdAt: row.created_at
   };
+}
+
+async function auditClaimEvent({ claimUuid, userId, token, eventType, eventLabel, detail }) {
+  const response = await fetch(`${supabaseUrl()}/rest/v1/claim_events`, {
+    method: "POST",
+    headers: {
+      apikey: process.env.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify({ claim_uuid: claimUuid, user_id: userId, event_type: eventType, event_label: eventLabel, detail })
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || "Claim saved, but its audit log could not be created. Run roadmap_features.sql and retry.");
+  }
 }
 
 async function persistClaim(req, input, claimId) {
@@ -80,6 +101,9 @@ async function persistClaim(req, input, claimId) {
     receipt_content_type: compactText(input.receiptContentType, 100),
     receipt_check: compactText(input.receiptCheck, 40),
     policy_check: input.policyCheck && typeof input.policyCheck === "object" ? input.policyCheck : null,
+    // The policy time is written by the server when the reviewed packet is
+    // saved, rather than trusting a timestamp supplied by the browser.
+    policy_checked_at: input.policyCheck && typeof input.policyCheck === "object" ? new Date().toISOString() : null,
     evidence: compactEvidence(input.evidence)
   };
   const response = await fetch(`${supabaseUrl()}/rest/v1/claims`, {
@@ -94,6 +118,68 @@ async function persistClaim(req, input, claimId) {
   });
   const rows = await response.json();
   if (!response.ok || !rows[0]) throw new Error(rows.message || "Could not save your claim packet. Make sure the claims table has been created in Supabase.");
+  const saved = rows[0];
+  if (input.extractionConsent === true) {
+    await auditClaimEvent({
+      claimUuid: saved.id,
+      userId: user.id,
+      token,
+      eventType: "receipt_analysis_consented",
+      eventLabel: "You consented to AI extraction of visible receipt details.",
+      detail: { purpose: "receipt detail extraction", automated_submission: false }
+    });
+  }
+  if (input.extractionApplied === true) {
+    await auditClaimEvent({
+      claimUuid: saved.id,
+      userId: user.id,
+      token,
+      eventType: "receipt_extracted",
+      eventLabel: "AI receipt suggestions were reviewed and applied by you.",
+      detail: { fields: ["merchant", "order reference", "purchase date", "amount", "item or service"] }
+    });
+  }
+  await auditClaimEvent({
+    claimUuid: saved.id,
+    userId: user.id,
+    token,
+    eventType: "fields_reviewed",
+    eventLabel: "You approved the editable claim details before saving.",
+    detail: { fields: ["merchant", "order reference", "issue", "amount", "policy link"] }
+  });
+  await auditClaimEvent({
+    claimUuid: saved.id,
+    userId: user.id,
+    token,
+    eventType: "claim_created",
+    eventLabel: "Claim packet created after your explicit approval.",
+    detail: { automated_submission: false, receipt_check: record.receipt_check }
+  });
+  if (record.receipt_path) {
+    await auditClaimEvent({
+      claimUuid: saved.id,
+      userId: user.id,
+      token,
+      eventType: "receipt_stored",
+      eventLabel: "Receipt stored in your private ClaimBack folder.",
+      detail: { receipt_name: record.receipt_name, storage: "private" }
+    });
+  }
+  if (record.policy_check) {
+    await auditClaimEvent({
+      claimUuid: saved.id,
+      userId: user.id,
+      token,
+      eventType: "policy_checked",
+      eventLabel: "Public merchant policy checked by TinyFish.",
+      detail: {
+        url: record.policy_url,
+        checked_at: record.policy_checked_at,
+        policy_found: record.policy_check.policy_found === true,
+        eligible_to_continue: record.policy_check.eligible_to_continue === true
+      }
+    });
+  }
   return presentClaim(rows[0]);
 }
 
