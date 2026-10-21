@@ -20,6 +20,79 @@ function tinyFishUrls() {
   return { queueUrl, runsBase };
 }
 
+const tokenFrom = req => (req.headers.cookie || "").match(/(?:^|; )claimback_session=([^;]+)/)?.[1];
+const supabaseUrl = () => process.env.SUPABASE_URL?.replace(/\/$/, "");
+const compactText = (value, max = 600) => typeof value === "string" ? value.trim().slice(0, max) : null;
+const compactEvidence = value => Array.isArray(value) ? value.filter(item => typeof item === "string").slice(0, 12).map(item => item.slice(0, 500)) : [];
+
+async function signedInUser(req) {
+  const token = tokenFrom(req);
+  if (!token || !supabaseUrl() || !process.env.SUPABASE_ANON_KEY) {
+    throw new Error("Sign in and configure Supabase before saving claim packets.");
+  }
+  const response = await fetch(`${supabaseUrl()}/auth/v1/user`, {
+    headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) throw new Error("Your session has expired. Please sign in again.");
+  return { token, user: await response.json() };
+}
+
+function presentClaim(row) {
+  return {
+    claimId: row.claim_id,
+    status: row.status,
+    merchant: row.merchant,
+    orderId: row.order_id,
+    issue: row.issue,
+    problemDetails: row.problem_details,
+    amount: row.amount,
+    currency: row.currency,
+    transactionDate: row.transaction_date,
+    portalUrl: row.policy_url,
+    receiptName: row.receipt_name,
+    receiptCheck: row.receipt_check,
+    policyCheck: row.policy_check,
+    evidence: Array.isArray(row.evidence) ? row.evidence : [],
+    created: new Date(row.created_at).toLocaleDateString("en-IN"),
+    createdAt: row.created_at
+  };
+}
+
+async function persistClaim(req, input, claimId) {
+  const { token, user } = await signedInUser(req);
+  const amount = Number(input.amount);
+  const record = {
+    user_id: user.id,
+    claim_id: claimId,
+    status: "Claim packet ready",
+    merchant: compactText(input.merchant, 160),
+    order_id: compactText(input.orderId, 160),
+    issue: compactText(input.issue, 160),
+    problem_details: compactText(input.problemDetails, 3000),
+    amount: Number.isFinite(amount) && amount >= 0 ? amount : null,
+    currency: compactText(input.currency, 12) || "INR",
+    transaction_date: /^\d{4}-\d{2}-\d{2}$/.test(input.transactionDate || "") ? input.transactionDate : null,
+    policy_url: compactText(input.portalUrl, 2000),
+    receipt_name: compactText(input.receiptName, 255),
+    receipt_check: compactText(input.receiptCheck, 40),
+    policy_check: input.policyCheck && typeof input.policyCheck === "object" ? input.policyCheck : null,
+    evidence: compactEvidence(input.evidence)
+  };
+  const response = await fetch(`${supabaseUrl()}/rest/v1/claims`, {
+    method: "POST",
+    headers: {
+      apikey: process.env.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation"
+    },
+    body: JSON.stringify(record)
+  });
+  const rows = await response.json();
+  if (!response.ok || !rows[0]) throw new Error(rows.message || "Could not save your claim packet. Make sure the claims table has been created in Supabase.");
+  return presentClaim(rows[0]);
+}
+
 function policyRequest({ portalUrl, ...claim }) {
   let safeUrl;
   try { safeUrl = new URL(portalUrl); } catch { throw new Error("Add a valid public merchant policy URL first."); }
@@ -88,11 +161,18 @@ export default async function handler(req, res) {
     if (claim.receiptCheck !== "verified" || !claim.eligibleToProceed || !claim.policyEligible) {
       return res.status(400).json({ error: "Verified receipt evidence and a matching public policy check are required before creating a claim." });
     }
-    return res.status(200).json({
-      status: "created",
-      claimId: `CB-${Date.now().toString(36).toUpperCase()}`,
-      message: "Your claim packet is created. It has not been sent to the merchant."
-    });
+    try {
+      const claimId = `CB-${Date.now().toString(36).toUpperCase()}`;
+      const savedClaim = await persistClaim(req, claim.claim || {}, claimId);
+      return res.status(200).json({
+        status: "created",
+        claimId,
+        claim: savedClaim,
+        message: "Your claim packet is saved securely to your account. It has not been sent to the merchant."
+      });
+    } catch (error) {
+      return res.status(422).json({ error: error.message });
+    }
   }
 
   return res.status(400).json({ error: "Unknown claim action." });

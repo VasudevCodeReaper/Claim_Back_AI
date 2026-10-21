@@ -1,10 +1,16 @@
 # ClaimBack AI
 
-ClaimBack is a human-in-the-loop claim recovery assistant. A consumer uploads a receipt, explains what went wrong, receives an AI evidence check, then gets a TinyFish review of a public merchant policy before explicitly creating a reviewable claim packet.
+ClaimBack is a human-in-the-loop claim recovery assistant. A consumer can opt in to let AI extract visible receipt details, review and apply each suggestion, explain what went wrong, then receive an evidence check and TinyFish review of a public merchant policy before explicitly creating a reviewable claim packet.
 
 ## What makes it different
 
 It does not auto-submit on a user's behalf. The product has a hard approval gate before it creates a claim packet, and TinyFish is restricted to reading the supplied public policy page. It never logs in to a merchant portal, contacts support, or submits a refund request.
+
+## Consent-first receipt autofill
+
+After choosing a receipt, the user must tick a consent checkbox and select **Extract receipt details with AI**. Gemini proposes only visible merchant, order reference, amount, date, and item/service data. The values remain in a review card until the user selects **Apply suggested details**; all fields can still be edited before the policy check.
+
+Selecting a supported merchant suggests a public policy link. The user must review that suggestion, and can replace it with a different public URL. ClaimBack currently includes suggestions for Amazon India, Flipkart, Zomato, Swiggy, and the clearly-labelled DemoMart QA fixture. Merchant sites can move policies, so the user remains responsible for checking the destination before running the read-only TinyFish check.
 
 ## Deploy to Vercel
 
@@ -34,19 +40,20 @@ Open `http://localhost:3000`.
 
 | Layer | Role |
 | --- | --- |
-| `public/index.html` | Responsive receipt-upload, evidence-check, and claim-approval interface |
-| `api/analyze.js` | Gemini multimodal receipt verification with a safe non-approval fallback |
+| `public/index.html` | Responsive receipt-upload, consent-first AI autofill, policy suggestion, evidence-check, and claim-approval interface |
+| `api/analyze.js` | Gemini multimodal receipt extraction and verification with a safe non-approval fallback |
 | `api/claim.js` | Queued TinyFish public-policy check and explicit claim-packet creation |
-| `api/auth.js` and `api/me.js` | Supabase-backed account sign-up, sign-in, and protected session |
+| `api/auth.js`, `api/me.js`, and `api/claims.js` | Supabase-backed account sign-up, sign-in, protected session, and private claim history |
 
 ## Set up real accounts
 
 1. Create a free project at [Supabase](https://supabase.com/dashboard).
 2. In Supabase **Authentication → Providers → Email**, keep Email enabled. For a fast demo, turn off **Confirm email**; keep it on for a production project.
 3. In Supabase **Project Settings → API**, copy the Project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY` in Vercel.
-4. Redeploy in Vercel.
+4. In **SQL Editor**, run [`supabase/claims_schema.sql`](supabase/claims_schema.sql) once. This creates the private claims table and Row Level Security policies.
+5. Redeploy in Vercel.
 
-The app contains no fabricated claim or recovery data. For privacy, the receipt binary is sent only for the verification request and is not saved by the app; only its name and an evidence summary are retained locally in that browser. New claim packets are also local to that browser; production persistence can be added with a Supabase `claims` table and Storage bucket.
+The app contains no fabricated claim or recovery data. For privacy, the receipt binary is sent only for the verification request and is not saved by the app. Claim packets now persist to the signed-in user's Supabase account; the stored data is limited to claim metadata, policy results, and evidence summaries. A Storage bucket with retention controls should be added before retaining actual invoice files.
 
 ## TinyFish rollout
 
