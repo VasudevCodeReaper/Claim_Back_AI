@@ -16,6 +16,8 @@ create table if not exists public.claims (
   transaction_date date,
   policy_url text,
   receipt_name text,
+  receipt_path text,
+  receipt_content_type text,
   receipt_check text,
   policy_check jsonb,
   evidence jsonb not null default '[]'::jsonb,

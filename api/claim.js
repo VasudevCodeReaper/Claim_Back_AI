@@ -50,6 +50,8 @@ function presentClaim(row) {
     transactionDate: row.transaction_date,
     portalUrl: row.policy_url,
     receiptName: row.receipt_name,
+    receiptPath: row.receipt_path,
+    receiptContentType: row.receipt_content_type,
     receiptCheck: row.receipt_check,
     policyCheck: row.policy_check,
     evidence: Array.isArray(row.evidence) ? row.evidence : [],
@@ -74,6 +76,8 @@ async function persistClaim(req, input, claimId) {
     transaction_date: /^\d{4}-\d{2}-\d{2}$/.test(input.transactionDate || "") ? input.transactionDate : null,
     policy_url: compactText(input.portalUrl, 2000),
     receipt_name: compactText(input.receiptName, 255),
+    receipt_path: compactText(input.receiptPath, 600),
+    receipt_content_type: compactText(input.receiptContentType, 100),
     receipt_check: compactText(input.receiptCheck, 40),
     policy_check: input.policyCheck && typeof input.policyCheck === "object" ? input.policyCheck : null,
     evidence: compactEvidence(input.evidence)

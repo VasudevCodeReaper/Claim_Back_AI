@@ -51,9 +51,10 @@ Open `http://localhost:3000`.
 2. In Supabase **Authentication → Providers → Email**, keep Email enabled. For a fast demo, turn off **Confirm email**; keep it on for a production project.
 3. In Supabase **Project Settings → API**, copy the Project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY` in Vercel.
 4. In **SQL Editor**, run [`supabase/claims_schema.sql`](supabase/claims_schema.sql) once. This creates the private claims table and Row Level Security policies.
-5. Redeploy in Vercel.
+5. Run [`supabase/secure_receipt_storage.sql`](supabase/secure_receipt_storage.sql) once. This creates the non-public receipt bucket and user-only Storage policies.
+6. Redeploy in Vercel.
 
-The app contains no fabricated claim or recovery data. For privacy, the receipt binary is sent only for the verification request and is not saved by the app. Claim packets now persist to the signed-in user's Supabase account; the stored data is limited to claim metadata, policy results, and evidence summaries. A Storage bucket with retention controls should be added before retaining actual invoice files.
+The app contains no fabricated claim or recovery data. Receipt binary data is only saved when a user explicitly saves a verified claim packet. It is stored in a non-public per-user Supabase Storage folder and opened only through a short-lived signed link. Deleting a claim packet deletes its timeline entry and private receipt.
 
 ## TinyFish rollout
 
