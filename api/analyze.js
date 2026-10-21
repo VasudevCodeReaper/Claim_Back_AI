@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+const QA_RECEIPT_SHA256 = "720fc33cd77997d4ef4a019dfc2dfe6a7898dbc9a414fac8567fe7562a360332";
+
 const safeAssessment = (claim, reason) => ({
   mode: "safe_fallback",
   receiptCheck: "needs_review",
@@ -23,6 +27,8 @@ function publicDiagnostic(error) {
     gemini_http_404: "The configured Gemini model is not available. Set GEMINI_MODEL to gemini-3.8-flash, then redeploy.",
     gemini_http_429: "Gemini quota is currently exhausted. Check the Google AI Studio Usage page or wait for the quota window to reset.",
     gemini_http_500: "Gemini is temporarily unavailable. Please retry in a few minutes.",
+    gemini_http_503: "Gemini is currently busy. Please retry in a few minutes.",
+    gemini_timeout: "Gemini took too long to respond. Please retry in a moment.",
     gemini_response_invalid: "Gemini responded, but not with a usable receipt assessment. Please retry once.",
     gemini_network_error: "The server could not reach Gemini. Please retry in a few minutes.",
     gemini_request_failed: "Receipt analysis is temporarily unavailable. No claim was created."
@@ -37,11 +43,38 @@ function receiptPart(receipt) {
   return { inlineData: { mimeType: match[1], data: match[2] } };
 }
 
+function isVerifiedQaFixture(claim, attachment) {
+  if (claim.qaTest !== true || claim.receipt?.name !== "claimback-qa-test-receipt.pdf" || !attachment) return false;
+  const digest = createHash("sha256").update(Buffer.from(attachment.inlineData.data, "base64")).digest("hex");
+  return digest === QA_RECEIPT_SHA256;
+}
+
+function qaAssessment(claim, extractionOnly) {
+  return {
+    mode: "qa_simulation",
+    receiptCheck: "verified",
+    eligibleToProceed: true,
+    confidence: 1,
+    merchant: "DemoMart India",
+    orderId: "QA-ORDER-2026-1001",
+    amount: 1299,
+    currency: "INR",
+    transactionDate: "2026-10-17",
+    itemSummary: "Wireless Earbuds (QA sample product)",
+    category: claim.issue || "Product arrived damaged",
+    receiptSummary: "ClaimBack QA test invoice recognised. This is not a real purchase.",
+    explanation: "Your synthetic QA receipt is verified for the ClaimBack test workflow. It cannot be used for a real claim.",
+    evidence: ["DemoMart India QA invoice", "Order QA-ORDER-2026-1001", "Total paid: Rs. 1,299"],
+    nextAction: "Review the test values, then continue with the DemoMart test policy.",
+    extractionOnly,
+    receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   const claim = req.body || {};
-  const isQaFixture = claim.qaTest === true && claim.receipt?.name === "claimback-qa-test-receipt.pdf";
   const extractionOnly = claim.intent === "extract_receipt";
   const supportedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
   if (!claim.receipt?.name || !supportedTypes.includes(claim.receipt.type)) {
@@ -52,6 +85,10 @@ export default async function handler(req, res) {
   }
   const attachment = receiptPart(claim.receipt);
   if (!attachment) return res.status(400).json({ error: "The receipt file could not be read. Try uploading it again." });
+  // The QA path is deterministic and hash-locked to ClaimBack's sample PDF.
+  // Renaming an arbitrary file cannot unlock it, and it never calls Gemini.
+  const isQaFixture = isVerifiedQaFixture(claim, attachment);
+  if (isQaFixture) return res.status(200).json(qaAssessment(claim, extractionOnly));
   if (!process.env.GEMINI_API_KEY) {
     return res.status(200).json(safeAssessment(claim, "AI receipt checking is not configured yet. Add GEMINI_API_KEY in Vercel."));
   }
@@ -97,14 +134,22 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
 
   try {
     const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }, attachment] }],
-        generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
-      })
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    let response;
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, attachment] }],
+          generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+        }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       const providerBody = await response.text();
       const diagnostic = `gemini_http_${response.status}`;
@@ -134,6 +179,7 @@ Set eligibleToProceed true only if receiptCheck is verified and the issue is pla
       receipt: { name: claim.receipt.name, type: claim.receipt.type, size: claim.receipt.size }
     });
   } catch (error) {
+    if (error?.name === "AbortError") error.diagnostic = "gemini_timeout";
     const diagnostic = publicDiagnostic(error);
     if (!error?.diagnostic) console.error("ClaimBack Gemini receipt check failed", { diagnostic: diagnostic.code, message: String(error?.message || error) });
     return res.status(200).json({ ...safeAssessment(claim, diagnostic.message), diagnostic: diagnostic.code });

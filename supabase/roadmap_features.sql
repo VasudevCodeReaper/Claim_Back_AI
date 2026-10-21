@@ -19,7 +19,7 @@ create table if not exists public.claim_events (
 
 alter table public.claim_events drop constraint if exists claim_events_event_type_check;
 alter table public.claim_events add constraint claim_events_event_type_check
-  check (event_type in ('receipt_analysis_consented', 'receipt_extracted', 'fields_reviewed', 'claim_created', 'receipt_stored', 'policy_checked', 'submission_confirmed', 'refund_received'));
+  check (event_type in ('receipt_analysis_consented', 'receipt_extracted', 'fields_reviewed', 'claim_created', 'receipt_stored', 'policy_checked', 'submission_confirmed', 'refund_received', 'sandbox_run_started', 'sandbox_draft_ready', 'sandbox_run_cancelled', 'sandbox_run_failed', 'sandbox_submitted'));
 
 create index if not exists claim_events_claim_uuid_created_at_idx
   on public.claim_events (claim_uuid, created_at asc);

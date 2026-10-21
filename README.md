@@ -4,7 +4,7 @@ ClaimBack is a human-in-the-loop claim recovery assistant. A consumer can opt in
 
 ## What makes it different
 
-It does not auto-submit on a user's behalf. The product has a hard approval gate before it creates a claim packet, and TinyFish is restricted to reading the supplied public policy page. It never logs in to a merchant portal, contacts support, or submits a refund request.
+For real merchants, it does not auto-submit on a user's behalf. The product has a hard approval gate before it creates a claim packet, and TinyFish is restricted to reading the supplied public policy page. It never logs in to a merchant portal, contacts support, or submits a refund request.
 
 ## Consent-first receipt autofill
 
@@ -44,6 +44,7 @@ Open `http://localhost:3000`.
 | `api/analyze.js` | Gemini multimodal receipt extraction and verification with a safe non-approval fallback |
 | `api/claim.js` | Queued TinyFish public-policy check, policy snapshot, and explicit claim-packet creation |
 | `api/auth.js`, `api/me.js`, `api/claims.js`, and `api/claim-events.js` | Supabase-backed account sign-up, sign-in, private claim history, deletion, audit trail, user-confirmed submission, and recovery updates |
+| `api/demomart-session.js` | Allowlisted TinyFish live-browser workflow for the DemoMart QA sandbox only; supports a review-only draft, explicit sandbox submission, and user abort |
 
 ## Set up real accounts
 
@@ -52,7 +53,7 @@ Open `http://localhost:3000`.
 3. In Supabase **Project Settings → API**, copy the Project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY` in Vercel.
 4. In **SQL Editor**, run [`supabase/claims_schema.sql`](supabase/claims_schema.sql) once. This creates the private claims table and Row Level Security policies.
 5. Run [`supabase/secure_receipt_storage.sql`](supabase/secure_receipt_storage.sql) once. This creates the non-public receipt bucket and user-only Storage policies.
-6. Run [`supabase/roadmap_features.sql`](supabase/roadmap_features.sql) once. This adds policy timestamps, the private audit trail, and user-confirmed submission/recovery states.
+6. Run [`supabase/roadmap_features.sql`](supabase/roadmap_features.sql) once. This adds policy timestamps, the private audit trail, user-confirmed submission/recovery states, and the DemoMart sandbox event types. It is safe to run again after updates.
 7. Redeploy in Vercel.
 
 The app contains no fabricated claim or recovery data. Receipt binary data is only saved when a user explicitly saves a verified claim packet. It is stored in a non-public per-user Supabase Storage folder and opened only through a short-lived signed link. Deleting a claim packet deletes its timeline entry and private receipt.
@@ -65,7 +66,15 @@ Claims created before these migrations remain available, but they cannot gain a 
 
 ## TinyFish rollout
 
-TinyFish is started as a queued run and the UI polls its status, avoiding a serverless timeout while a policy page is inspected. It reads only the public URL supplied by the user. It will not log in, fill a form, or submit anything. For merchant submission later, add tested per-merchant workflows, an allowlist, an audit log, and a final user confirmation screen.
+TinyFish is started as a queued run and the UI polls its status, avoiding a serverless timeout while a policy page is inspected. It reads only the public URL supplied by the user. It will not log in, fill a form, or submit anything for real merchants.
+
+### Supervised DemoMart sandbox
+
+The deployed DemoMart India site is the one exception: it is an allowlisted fictional QA environment. Open a claim whose merchant is **DemoMart India** and order ID is **QA-ORDER-2026-1001**, then use **Start live DemoMart draft**. ClaimBack opens TinyFish's read-only live browser preview while it fills the sandbox form and stops on Step 3 before the consent checkbox or submit button.
+
+After reviewing the preview, select **Submit reviewed sandbox request** and confirm the browser dialog. ClaimBack verifies that a review-ready draft was created within the previous 20 minutes, then starts a separate isolated TinyFish run that repeats the reviewed packet, checks the sandbox-only consent box, and submits exactly one test request. **Esc** or **Abort session** cancels an active run. Each action and sandbox request reference is stored in the user's private audit trail.
+
+DemoMart currently stores requests in its own browser-local sandbox state and does not expose a tracking API, so ClaimBack can record the submission result but cannot poll a remote merchant status. A production merchant integration needs a documented server-side status API before cross-session tracking should be promised.
 
 ## QA test scenario
 
