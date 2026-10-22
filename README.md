@@ -1,88 +1,72 @@
 # ClaimBack AI
 
-ClaimBack is a human-in-the-loop claim recovery assistant. A consumer can opt in to let AI extract visible receipt details, review and apply each suggestion, explain what went wrong, then receive an evidence check and TinyFish review of a public merchant policy before explicitly creating a reviewable claim packet.
+ClaimBack is an evidence-first return and refund assistant. It extracts receipt facts only after user consent, checks a public policy with TinyFish, and saves a private claim packet. Its newest workflow helps people document and respond to customer-support chatbot friction—such as repeated deflection, vague policy references, or blocked access to a human agent.
 
-## What makes it different
+## What it does
 
-For real merchants, it does not auto-submit on a user's behalf. The product has a hard approval gate before it creates a claim packet, and TinyFish is restricted to reading the supplied public policy page. It never logs in to a merchant portal, contacts support, or submits a refund request.
+1. **Receipt evidence:** Gemini proposes visible receipt details. The user reviews and applies any suggestion before it is used.
+2. **Public-policy check:** TinyFish reads only the public policy link supplied or approved by the user.
+3. **Private claim packet:** The verified receipt, policy summary, and user-approved details are stored privately in Supabase.
+4. **Supervised chatbot advocacy:** From a claim timeline, the user supplies the official merchant support-chat URL and an objective. After an explicit approval, TinyFish can hold a factual, limited conversation while the user watches its live preview.
+5. **Persistent case memory:** Each completed conversation stores a compact summary, transcript notes, suspected return-friction patterns, and next step. When a TinyFish browser epoch ends, the user can continue in a new run with that memory injected.
 
-## Consent-first receipt autofill
+## Safety boundaries
 
-After choosing a receipt, the user must tick a consent checkbox and select **Extract receipt details with AI**. Gemini proposes only visible merchant, order reference, amount, date, and item/service data. The values remain in a review card until the user selects **Apply suggested details**; all fields can still be edited before the policy check.
-
-Selecting a supported merchant suggests a public policy link. The user must review that suggestion, and can replace it with a different public URL. ClaimBack currently includes suggestions for Amazon India, Flipkart, Zomato, Swiggy, and the clearly-labelled DemoMart QA fixture. Merchant sites can move policies, so the user remains responsible for checking the destination before running the read-only TinyFish check.
+- ClaimBack never collects or sends passwords, OTPs, payment-card data, government ID, or facts absent from the approved claim packet.
+- It will not buy, cancel, accept a waiver or store credit, book a return, submit a refund, or click a final confirmation.
+- The chatbot agent stops when a login, CAPTCHA, sensitive information, payment, or irreversible decision is required.
+- Runs are user-initiated and capped at eight chat turns. Press **Esc** or **Stop chat** to cancel an active run.
+- “Persistent” means ClaimBack stores the private *case memory*, not that TinyFish keeps an immortal browser. A new run continues from the saved summary. A merchant-specific TinyFish Browser Context Profile can additionally preserve an already-authorized browser login if the user configures one directly in TinyFish.
 
 ## Deploy to Vercel
 
-1. Push this repository to GitHub.
-2. Import it in [Vercel](https://vercel.com/new).
-3. Add the variables from `.env.example` in **Settings → Environment Variables**. `GEMINI_API_KEY`, `TINYFISH_API_KEY`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY` are needed for the complete product.
-4. Deploy. Vercel serves the frontend and serverless `/api` endpoints.
+1. Push this repository to GitHub and import it into Vercel.
+2. Add the environment variables from `.env.example` in **Settings → Environment Variables**.
+3. In Supabase SQL Editor, run these files in order:
+   - `supabase/claims_schema.sql`
+   - `supabase/secure_receipt_storage.sql`
+   - `supabase/roadmap_features.sql`
+4. Redeploy the Vercel project.
 
-Or with the CLI:
+Required environment variables:
 
-```bash
-npm i -g vercel
-vercel --prod
+```text
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-3.8-flash
+TINYFISH_API_KEY=...
+TINYFISH_AGENT_URL=https://agent.tinyfish.ai/v1/automation/run
+TINYFISH_SSE_URL=https://agent.tinyfish.ai/v1/automation/run-sse
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
 ```
-
-## Local development
-
-```bash
-npm i -g vercel
-cp .env.example .env.local
-vercel dev
-```
-
-Open `http://localhost:3000`.
 
 ## Architecture
 
-| Layer | Role |
+| Component | Role |
 | --- | --- |
-| `public/index.html` | Responsive receipt-upload, consent-first AI autofill, policy suggestion, evidence-check, and claim-approval interface |
-| `api/analyze.js` | Gemini multimodal receipt extraction and verification with a safe non-approval fallback |
-| `api/claim.js` | Queued TinyFish public-policy check, policy snapshot, and explicit claim-packet creation |
-| `api/auth.js`, `api/me.js`, `api/claims.js`, and `api/claim-events.js` | Supabase-backed account sign-up, sign-in, private claim history, deletion, audit trail, user-confirmed submission, and recovery updates |
-| `api/demomart-session.js` | Allowlisted TinyFish live-browser workflow for the DemoMart QA sandbox only; supports a review-only draft, explicit sandbox submission, and user abort |
+| `public/index.html` | Consent-first receipt workflow, claim hub, audit timeline, and live supervised-chat interface |
+| `api/analyze.js` | Gemini receipt extraction and evidence verification |
+| `api/claim.js` | Read-only TinyFish policy check and approved claim-packet creation |
+| `api/chat-advocacy.js` | TinyFish live chatbot runs, abort support, durable case-memory updates, and audit logging |
+| `api/auth.js`, `api/claims.js`, `api/claim-events.js`, `api/receipts.js` | Supabase-backed authentication, private storage, claims, deletion, and audit history |
+| `supabase/roadmap_features.sql` | Audit trail, recovery state, and persistent chatbot-case memory with RLS |
 
-## Set up real accounts
+## Test the chatbot workflow
 
-1. Create a free project at [Supabase](https://supabase.com/dashboard).
-2. In Supabase **Authentication → Providers → Email**, keep Email enabled. For a fast demo, turn off **Confirm email**; keep it on for a production project.
-3. In Supabase **Project Settings → API**, copy the Project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY` in Vercel.
-4. In **SQL Editor**, run [`supabase/claims_schema.sql`](supabase/claims_schema.sql) once. This creates the private claims table and Row Level Security policies.
-5. Run [`supabase/secure_receipt_storage.sql`](supabase/secure_receipt_storage.sql) once. This creates the non-public receipt bucket and user-only Storage policies.
-6. Run [`supabase/roadmap_features.sql`](supabase/roadmap_features.sql) once. This adds policy timestamps, the private audit trail, user-confirmed submission/recovery states, and the DemoMart sandbox event types. It is safe to run again after updates.
-7. Redeploy in Vercel.
+1. Create a verified claim packet.
+2. Open it from **Claims Hub**.
+3. Paste the merchant’s official support-chat URL and a specific objective.
+4. Tick the approval checkbox and choose **Start supervised chat**.
+5. Watch TinyFish in the live preview. Stop it with **Esc** if required.
+6. Inspect the saved conclusion, next action, and any recorded return-friction patterns.
+7. Use **Continue with saved memory** if another short browser run is required.
 
-The app contains no fabricated claim or recovery data. Receipt binary data is only saved when a user explicitly saves a verified claim packet. It is stored in a non-public per-user Supabase Storage folder and opened only through a short-lived signed link. Deleting a claim packet deletes its timeline entry and private receipt.
+For a safe, repeatable presentation, deploy first and use this built-in sandbox URL as the support-chat URL:
 
-## Guided submission and audit trail
+```text
+https://YOUR-CLAIMBACK-DOMAIN/returnmaze-demo.html
+```
 
-ClaimBack now creates a reviewable submission draft from the user-approved claim packet. The user copies and submits it through the merchant's official channel themselves; ClaimBack never logs in to, contacts, or submits to a merchant. Afterward, the user can mark the claim as submitted and later record an amount actually received. Each event is written to a private per-user audit trail with the receipt-storage, policy-check, and explicit-confirmation events. The saved policy snapshot shows when it was checked and is flagged after 30 days so the user can review the merchant's current terms before acting.
+It is a scripted e-commerce chatbot that models common return-friction behaviours and ends in a human-escalation reference. TinyFish interacts with its real visible chat interface; it does not use a fake API response.
 
-Claims created before these migrations remain available, but they cannot gain a historical receipt object or audit entries retroactively. Create a new QA claim to test the complete new flow.
-
-## TinyFish rollout
-
-TinyFish is started as a queued run and the UI polls its status, avoiding a serverless timeout while a policy page is inspected. It reads only the public URL supplied by the user. It will not log in, fill a form, or submit anything for real merchants.
-
-### Supervised DemoMart sandbox
-
-The deployed DemoMart India site is the one exception: it is an allowlisted fictional QA environment. Open a claim whose merchant is **DemoMart India** and order ID is **QA-ORDER-2026-1001**, then use **Start live DemoMart draft**. ClaimBack opens TinyFish's read-only live browser preview while it fills the sandbox form and stops on Step 3 before the consent checkbox or submit button.
-
-After reviewing the preview, select **Submit reviewed sandbox request** and confirm the browser dialog. ClaimBack verifies that a review-ready draft was created within the previous 20 minutes, then starts a separate isolated TinyFish run that repeats the reviewed packet, checks the sandbox-only consent box, and submits exactly one test request. **Esc** or **Abort session** cancels an active run. Each action and sandbox request reference is stored in the user's private audit trail.
-
-DemoMart currently stores requests in its own browser-local sandbox state and does not expose a tracking API, so ClaimBack can record the submission result but cannot poll a remote merchant status. A production merchant integration needs a documented server-side status API before cross-session tracking should be promised.
-
-## QA test scenario
-
-`api/demo-policy.js` deliberately serves a fictional public policy for an end-to-end QA run. It is labelled as a test policy and applies only to the ClaimBack sample receipt; do not use it for real claims. After deployment, use `https://YOUR-VERCEL-DOMAIN/api/demo-policy` as the policy URL with the supplied QA receipt, order ID `QA-ORDER-2026-1001`, amount `1299`, and issue `Product arrived damaged`.
-
-## Security notes
-
-- Never expose `GEMINI_API_KEY` or `TINYFISH_API_KEY` to the browser.
-- Do not commit `.env.local`.
-- The receipt limit is 2.8 MB because browser-to-serverless base64 uploads must remain below Vercel request limits.
-- Use encrypted storage and a retention policy before retaining actual invoices or identities.
+Do not treat a chatbot response as legal advice, a guaranteed refund, or a binding merchant decision.

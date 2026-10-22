@@ -17,9 +17,21 @@ create table if not exists public.claim_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.claim_advocacy_cases (
+  claim_uuid uuid primary key references public.claims(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  support_url text not null,
+  objective text,
+  case_memory jsonb not null default '{}'::jsonb,
+  status text not null default 'ready',
+  last_run_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.claim_events drop constraint if exists claim_events_event_type_check;
 alter table public.claim_events add constraint claim_events_event_type_check
-  check (event_type in ('receipt_analysis_consented', 'receipt_extracted', 'fields_reviewed', 'claim_created', 'receipt_stored', 'policy_checked', 'submission_confirmed', 'refund_received', 'sandbox_run_started', 'sandbox_draft_ready', 'sandbox_run_cancelled', 'sandbox_run_failed', 'sandbox_submitted'));
+  check (event_type in ('receipt_analysis_consented', 'receipt_extracted', 'fields_reviewed', 'claim_created', 'receipt_stored', 'policy_checked', 'submission_confirmed', 'refund_received', 'chat_run_started', 'chat_run_completed', 'chat_run_cancelled', 'chat_run_failed', 'chat_conclusion', 'sandbox_run_started', 'sandbox_draft_ready', 'sandbox_run_cancelled', 'sandbox_run_failed', 'sandbox_submitted'));
 
 create index if not exists claim_events_claim_uuid_created_at_idx
   on public.claim_events (claim_uuid, created_at asc);
@@ -34,6 +46,24 @@ create policy "Users can read their own claim audit events"
 drop policy if exists "Users can write their own claim audit events" on public.claim_events;
 create policy "Users can write their own claim audit events"
   on public.claim_events for insert
+  with check (auth.uid() = user_id);
+
+alter table public.claim_advocacy_cases enable row level security;
+
+drop policy if exists "Users can read their own advocacy cases" on public.claim_advocacy_cases;
+create policy "Users can read their own advocacy cases"
+  on public.claim_advocacy_cases for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can create their own advocacy cases" on public.claim_advocacy_cases;
+create policy "Users can create their own advocacy cases"
+  on public.claim_advocacy_cases for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update their own advocacy cases" on public.claim_advocacy_cases;
+create policy "Users can update their own advocacy cases"
+  on public.claim_advocacy_cases for update
+  using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
 create or replace function public.claimback_set_updated_at()
