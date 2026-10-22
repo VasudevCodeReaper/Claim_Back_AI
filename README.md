@@ -1,72 +1,84 @@
 # ClaimBack AI
 
-ClaimBack is an evidence-first return and refund assistant. It extracts receipt facts only after user consent, checks a public policy with TinyFish, and saves a private claim packet. Its newest workflow helps people document and respond to customer-support chatbot friction—such as repeated deflection, vague policy references, or blocked access to a human agent.
+ClaimBack is an evidence-first return and refund workspace. Gemini extracts visible receipt facts only after consent; TinyFish reads a public policy; Supabase holds a private claim packet and its audit timeline.
 
-## What it does
+The project also includes a **controlled CDP demonstration**. It launches a TinyFish Browser session from a separate worker, uses Playwright locators to chat with ClaimBack's built-in ReturnMaze page, records the return-friction patterns it encounters, and saves a compact conclusion to the claim's private memory.
 
-1. **Receipt evidence:** Gemini proposes visible receipt details. The user reviews and applies any suggestion before it is used.
-2. **Public-policy check:** TinyFish reads only the public policy link supplied or approved by the user.
-3. **Private claim packet:** The verified receipt, policy summary, and user-approved details are stored privately in Supabase.
-4. **Supervised chatbot advocacy:** From a claim timeline, the user supplies the official merchant support-chat URL and an objective. After an explicit approval, TinyFish can hold a factual, limited conversation while the user watches its live preview.
-5. **Persistent case memory:** Each completed conversation stores a compact summary, transcript notes, suspected return-friction patterns, and next step. When a TinyFish browser epoch ends, the user can continue in a new run with that memory injected.
+## Important boundary
 
-## Safety boundaries
+The CDP worker is deliberately limited to this project's own `returnmaze-demo.html` page. It cannot be given an arbitrary merchant URL, use credentials, accept an offer, submit a request, or click a final action. This is a safe, repeatable demo of the technical pattern—not a real-world merchant automation product.
 
-- ClaimBack never collects or sends passwords, OTPs, payment-card data, government ID, or facts absent from the approved claim packet.
-- It will not buy, cancel, accept a waiver or store credit, book a return, submit a refund, or click a final confirmation.
-- The chatbot agent stops when a login, CAPTCHA, sensitive information, payment, or irreversible decision is required.
-- Runs are user-initiated and capped at eight chat turns. Press **Esc** or **Stop chat** to cancel an active run.
-- “Persistent” means ClaimBack stores the private *case memory*, not that TinyFish keeps an immortal browser. A new run continues from the saved summary. A merchant-specific TinyFish Browser Context Profile can additionally preserve an already-authorized browser login if the user configures one directly in TinyFish.
+## How the controlled demo works
 
-## Deploy to Vercel
+1. A signed-in user opens a verified claim and checks **I approve this controlled demo run**.
+2. Vercel verifies the user and claim, then sends only the claim context plus a generated run ID to the private worker.
+3. The worker creates a TinyFish Browser session, connects to its `cdp_url` with Playwright, and opens `returnmaze-demo.html`.
+4. It interacts only through the rendered `#message` field and Send button with three fixed messages: request the normal return path, reject store credit in favour of the policy/label, then request a human escalation.
+5. The worker returns SSE progress updates. If TinyFish provides a viewer URL, ClaimBack displays it in the live-preview frame.
+6. The user may press **Esc** or **Stop demo**. The worker closes the CDP connection and stores a cancelled result.
+7. ClaimBack stores the transcript summary, result, and possible friction patterns in Supabase. No receipt content, login, payment, return label, or refund submission is sent to the demo.
 
-1. Push this repository to GitHub and import it into Vercel.
-2. Add the environment variables from `.env.example` in **Settings → Environment Variables**.
-3. In Supabase SQL Editor, run these files in order:
-   - `supabase/claims_schema.sql`
-   - `supabase/secure_receipt_storage.sql`
-   - `supabase/roadmap_features.sql`
-4. Redeploy the Vercel project.
+## Deploy
 
-Required environment variables:
+### 1. Deploy ClaimBack to Vercel
+
+Push the repository, import it into Vercel, then configure these variables from `.env.example`:
 
 ```text
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-3.8-flash
 TINYFISH_API_KEY=...
 TINYFISH_AGENT_URL=https://agent.tinyfish.ai/v1/automation/run
-TINYFISH_SSE_URL=https://agent.tinyfish.ai/v1/automation/run-sse
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
+ALLOWED_DEMO_ORIGIN=https://YOUR-CLAIMBACK-DOMAIN
+AGENT_WORKER_URL=https://YOUR-WORKER-DOMAIN
+AGENT_WORKER_SECRET=<long random shared secret>
 ```
 
-## Architecture
+Run the Supabase scripts in this order:
+
+1. `supabase/claims_schema.sql`
+2. `supabase/secure_receipt_storage.sql`
+3. `supabase/roadmap_features.sql`
+
+### 2. Deploy the CDP worker to Railway or Render
+
+Do **not** deploy `worker/` to Vercel: Vercel functions are short-lived, whereas a CDP connection must remain open for the complete browser run.
+
+1. Create a new Railway service or Render Web Service from this repository.
+2. Set its root directory to `worker`.
+3. Use build command `npm install` and start command `npm start`.
+4. Add the values from `worker/.env.example`:
+
+```text
+TINYFISH_API_KEY=<your TinyFish key>
+TINYFISH_BROWSER_API_URL=https://api.browser.tinyfish.ai
+AGENT_WORKER_SECRET=<the same long random secret used in Vercel>
+ALLOWED_DEMO_ORIGIN=https://YOUR-CLAIMBACK-DOMAIN
+```
+
+5. Copy the public worker URL into Vercel as `AGENT_WORKER_URL`, then redeploy Vercel.
+6. Visit `https://YOUR-WORKER-DOMAIN/health`; it should return `{ "ok": true }`.
+
+## Demonstrate it
+
+1. Sign in, create a verified claim packet, then open it in **Claims Hub**.
+2. In the timeline, open **Controlled CDP demo**.
+3. Read the fixed ReturnMaze URL and objective, approve the run, and select **Start controlled demo**.
+4. Watch the status log; if TinyFish supplies a viewer link, the live frame becomes available too.
+5. Let it reach the human-escalation reference, then inspect the saved conclusion and private audit trail.
+
+## Project map
 
 | Component | Role |
 | --- | --- |
-| `public/index.html` | Consent-first receipt workflow, claim hub, audit timeline, and live supervised-chat interface |
-| `api/analyze.js` | Gemini receipt extraction and evidence verification |
-| `api/claim.js` | Read-only TinyFish policy check and approved claim-packet creation |
-| `api/chat-advocacy.js` | TinyFish live chatbot runs, abort support, durable case-memory updates, and audit logging |
-| `api/auth.js`, `api/claims.js`, `api/claim-events.js`, `api/receipts.js` | Supabase-backed authentication, private storage, claims, deletion, and audit history |
-| `supabase/roadmap_features.sql` | Audit trail, recovery state, and persistent chatbot-case memory with RLS |
+| `public/index.html` | Consent-first claim UI, private timeline, and controlled-demo controls |
+| `public/returnmaze-demo.html` | Scripted e-commerce chatbot used exclusively for the demo |
+| `api/analyze.js` | Gemini receipt extraction |
+| `api/claim.js` | Read-only TinyFish public-policy check and claim creation |
+| `api/chat-advocacy.js` | Authenticated Vercel proxy, URL allowlist, SSE relay, auditing, and saved case memory |
+| `worker/server.js` | Persistent TinyFish Browser CDP session and safe Playwright-only ReturnMaze interaction |
+| `supabase/roadmap_features.sql` | Audit history and persistent case-memory table with RLS |
 
-## Test the chatbot workflow
-
-1. Create a verified claim packet.
-2. Open it from **Claims Hub**.
-3. Paste the merchant’s official support-chat URL and a specific objective.
-4. Tick the approval checkbox and choose **Start supervised chat**.
-5. Watch TinyFish in the live preview. Stop it with **Esc** if required.
-6. Inspect the saved conclusion, next action, and any recorded return-friction patterns.
-7. Use **Continue with saved memory** if another short browser run is required.
-
-For a safe, repeatable presentation, deploy first and use this built-in sandbox URL as the support-chat URL:
-
-```text
-https://YOUR-CLAIMBACK-DOMAIN/returnmaze-demo.html
-```
-
-It is a scripted e-commerce chatbot that models common return-friction behaviours and ends in a human-escalation reference. TinyFish interacts with its real visible chat interface; it does not use a fake API response.
-
-Do not treat a chatbot response as legal advice, a guaranteed refund, or a binding merchant decision.
+Never treat output from this project as a guaranteed refund, legal advice, or a merchant decision.
