@@ -13,8 +13,8 @@ The CDP worker is deliberately limited to this project's own `returnmaze-demo.ht
 1. A signed-in user opens a verified claim and checks **I approve this controlled demo run**.
 2. Vercel verifies the user and claim, then sends only the claim context plus a generated run ID to the private worker.
 3. The worker creates a TinyFish Browser session, connects to its `cdp_url` with Playwright, and opens `returnmaze-demo.html`.
-4. It interacts only through the rendered `#message` field and Send button with three fixed messages: request the normal return path, reject store credit in favour of the policy/label, then request a human escalation.
-5. The worker returns SSE progress updates. If TinyFish provides a viewer URL, ClaimBack displays it in the live-preview frame.
+4. It interacts only through the rendered `#message` field and Send button with six fixed messages: request the normal return path, identify the order, reject store credit, clarify evidence, request the policy basis, then request human escalation.
+5. The worker returns a low-bandwidth live CDP screencast plus SSE progress and transcript events, so ClaimBack shows the remote browser while the conversation runs.
 6. The user may press **Esc** or **Stop demo**. The worker closes the CDP connection and stores a cancelled result.
 7. ClaimBack stores the transcript summary, result, and possible friction patterns in Supabase. No receipt content, login, payment, return label, or refund submission is sent to the demo.
 

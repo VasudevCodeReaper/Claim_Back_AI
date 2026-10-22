@@ -37,6 +37,23 @@ async function say(page, run, text) {
   await page.locator("#chatForm button").click();
   return waitForBot(page, before, run);
 }
+function beginScreencast(page, run, res, runId) {
+  const session = page.context().newCDPSession(page);
+  let lastFrameAt = 0;
+  session.on("Page.screencastFrame", async frame => {
+    try {
+      // Keep the relay light enough for a serverless SSE proxy while still
+      // producing a true live CDP screencast rather than periodic screenshots.
+      const now = Date.now();
+      if (!run.cancelled && now - lastFrameAt >= 125) {
+        lastFrameAt = now;
+        event(res, { type: "BROWSER_FRAME", run_id: runId, mime: "image/jpeg", data: frame.data });
+      }
+      await session.send("Page.screencastFrameAck", { sessionId: frame.sessionId });
+    } catch { /* session is expected to close when the run ends */ }
+  });
+  return session.send("Page.startScreencast", { format: "jpeg", quality: 62, maxWidth: 920, maxHeight: 660, everyNthFrame: 1 }).then(() => session).catch(() => null);
+}
 async function createBrowserSession() {
   if (!process.env.TINYFISH_API_KEY) throw new Error("TINYFISH_API_KEY is not configured on the CDP worker.");
   const response = await fetch(process.env.TINYFISH_BROWSER_API_URL || "https://api.browser.tinyfish.ai", { method: "POST", headers: { "X-API-Key": process.env.TINYFISH_API_KEY, "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(20000) });
@@ -74,16 +91,29 @@ app.post("/runs", requireSecret, async (req, res) => {
     const page = context.pages()[0] || await context.newPage();
     await page.goto(supportUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
     await page.locator("#chatForm").waitFor({ state: "visible", timeout: 10000 });
-    event(res, { type: "STARTED", run_id: runId, purpose: "Controlled ReturnMaze chat is open. The agent will use only the visible message field and Send button." });
+    const screencast = await beginScreencast(page, run, res, runId);
+    event(res, { type: "STARTED", run_id: runId, purpose: "Controlled ReturnMaze chat is open. You are watching a live CDP screencast of the remote browser." });
     const transcript = [];
-    const first = await say(page, run, "I need help with a damaged product and I would like the normal return path.");
-    transcript.push(`ReturnMaze: ${clean(first.at(-1), 650)}`); event(res, { type: "PROGRESS", run_id: runId, purpose: "ReturnMaze requested the order reference." });
-    const second = await say(page, run, "The order is RM-2026-0412. I do not want store credit; please provide a return label or the written policy basis.");
-    transcript.push(`ReturnMaze: ${clean(second.at(-1), 650)}`); event(res, { type: "PROGRESS", run_id: runId, purpose: "ReturnMaze offered store credit and added an extra verification step." });
-    const third = await say(page, run, "I have the receipt and evidence. Please connect me with a human returns specialist.");
-    const lastMessage = clean(third.at(-1), 900); transcript.push(`ReturnMaze: ${lastMessage}`);
+    const turns = [
+      "I need help with a damaged product and I would like the normal return path.",
+      "The order is RM-2026-0412. The wireless earbuds arrived damaged, and I have the receipt.",
+      "No, I do not want store credit. Please provide a return label or explain the written policy basis.",
+      "I have a photo of the damage and the receipt. What exact verification is still required?",
+      "Please share the written policy basis for delaying the return label. I am requesting the standard return path.",
+      "Please connect me with a human returns specialist and record my request for a return label."
+    ];
+    for (let index = 0; index < turns.length; index += 1) {
+      event(res, { type: "CHAT_TURN", run_id: runId, speaker: "ClaimBack", text: turns[index] });
+      const messages = await say(page, run, turns[index]); const reply = clean(messages.at(-1), 900);
+      transcript.push(`ClaimBack: ${turns[index]}`, `ReturnMaze: ${reply}`);
+      event(res, { type: "CHAT_TURN", run_id: runId, speaker: "ReturnMaze", text: reply });
+      if (index === 1) event(res, { type: "PROGRESS", run_id: runId, purpose: "ReturnMaze offered store credit instead of the normal return route." });
+      if (index === 3) event(res, { type: "PROGRESS", run_id: runId, purpose: "ReturnMaze added another verification step after evidence was confirmed." });
+    }
+    const lastMessage = clean(transcript.at(-1).replace(/^ReturnMaze: /, ""), 900);
+    await screencast?.send("Page.stopScreencast").catch(() => {});
     event(res, { type: "PROGRESS", run_id: runId, purpose: "The controlled chat reached a human-escalation outcome." });
-    event(res, { type: "COMPLETE", run_id: runId, status: "COMPLETED", result: { status: "concluded", summary: "The controlled ReturnMaze bot initially pushed store credit and extra verification, then supplied a human-escalation reference after the return path was restated.", transcript, dark_patterns: ["Store-credit pressure before offering the normal return route", "Extra verification step after a clear policy request"], next_user_action: "Use the visible ReturnMaze escalation reference in a real human review. This demo did not submit a return or refund.", last_message: lastMessage } });
+    event(res, { type: "COMPLETE", run_id: runId, status: "COMPLETED", result: { status: "concluded", summary: "The controlled ReturnMaze bot repeatedly diverted the return path through store-credit and verification steps before issuing a human-escalation reference.", transcript, dark_patterns: ["Store-credit pressure before offering the normal return route", "Repeated evidence and verification requirements", "Human escalation presented only after repeated requests"], next_user_action: "Use the visible ReturnMaze escalation reference in a real human review. This demo did not submit a return or refund.", last_message: lastMessage } });
     completed = true;
   } catch (error) {
     const cancelled = error?.name === "AbortError" || run.cancelled;
