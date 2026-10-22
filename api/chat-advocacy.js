@@ -101,19 +101,28 @@ function parseEventLine(buffer, onEvent) {
 async function streamChat(res, { claim, auth, headers, saved, supportUrl, objective }) {
   if (!process.env.TINYFISH_API_KEY) throw new Error("Add TINYFISH_API_KEY in Vercel before starting an advocacy chat.");
   const memory = claimMemory(claim, { ...saved, objective });
-  const upstream = await fetch(agentSseUrl(), {
-    method: "POST",
-    headers: { "X-API-Key": process.env.TINYFISH_API_KEY, "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({
-      url: supportUrl,
-      goal: goalFor({ memory, supportUrl }),
-      browser_profile: "lite",
-      agent_config: { mode: "strict", cursor_style: "fish", max_duration_seconds: 55 },
-      capture_config: { screenshots: true, snapshots: true, recording: false, html: false },
-      output_schema: { type: "object", properties: { status: { type: "string" }, summary: { type: "string" }, transcript: { type: "array", items: { type: "string" } }, dark_patterns: { type: "array", items: { type: "string" } }, next_user_action: { type: "string" }, last_message: { type: "string" } }, required: ["status", "summary", "next_user_action"] }
-    })
-  });
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8"); res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("Connection", "keep-alive");
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8"); res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("Connection", "keep-alive"); res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  sseEvent(res, "STATUS", { type: "STATUS", message: "Connecting to TinyFish live browser…" });
+  let upstream;
+  try {
+    upstream = await fetch(agentSseUrl(), {
+      method: "POST",
+      headers: { "X-API-Key": process.env.TINYFISH_API_KEY, "Content-Type": "application/json", Accept: "text/event-stream" },
+      signal: AbortSignal.timeout(50000),
+      body: JSON.stringify({
+        url: supportUrl,
+        goal: goalFor({ memory, supportUrl }),
+        browser_profile: "lite",
+        agent_config: { mode: "strict", cursor_style: "fish", max_duration_seconds: 55 },
+        capture_config: { screenshots: true, snapshots: true, recording: false, html: false },
+        output_schema: { type: "object", properties: { status: { type: "string" }, summary: { type: "string" }, transcript: { type: "array", items: { type: "string" } }, dark_patterns: { type: "array", items: { type: "string" } }, next_user_action: { type: "string" }, last_message: { type: "string" } }, required: ["status", "summary", "next_user_action"] }
+      })
+    });
+  } catch (error) {
+    sseEvent(res, "error", { error: error.name === "TimeoutError" ? "TinyFish did not open a live browser within 50 seconds. Try again in a moment." : `TinyFish connection failed: ${error.message}` });
+    return res.end();
+  }
   if (!upstream.ok || !upstream.body) { const body = await upstream.text(); sseEvent(res, "error", { error: `TinyFish could not start the chat: ${body.slice(0, 500)}` }); return res.end(); }
 
   let pending = "", runId = "", started = false; const decoder = new TextDecoder();
