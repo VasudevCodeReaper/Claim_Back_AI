@@ -37,8 +37,8 @@ async function say(page, run, text) {
   await page.locator("#chatForm button").click();
   return waitForBot(page, before, run);
 }
-function beginScreencast(page, run, res, runId) {
-  const session = page.context().newCDPSession(page);
+async function beginScreencast(page, run, res, runId) {
+  const session = await page.context().newCDPSession(page);
   let lastFrameAt = 0;
   session.on("Page.screencastFrame", async frame => {
     try {
@@ -52,7 +52,12 @@ function beginScreencast(page, run, res, runId) {
       await session.send("Page.screencastFrameAck", { sessionId: frame.sessionId });
     } catch { /* session is expected to close when the run ends */ }
   });
-  return session.send("Page.startScreencast", { format: "jpeg", quality: 62, maxWidth: 920, maxHeight: 660, everyNthFrame: 1 }).then(() => session).catch(() => null);
+  try {
+    await session.send("Page.startScreencast", { format: "jpeg", quality: 62, maxWidth: 920, maxHeight: 660, everyNthFrame: 1 });
+    return session;
+  } catch {
+    return null;
+  }
 }
 async function createBrowserSession() {
   if (!process.env.TINYFISH_API_KEY) throw new Error("TINYFISH_API_KEY is not configured on the CDP worker.");
