@@ -13,7 +13,7 @@ The CDP worker is deliberately limited to this project's own `returnmaze-demo.ht
 1. A signed-in user opens a verified claim and checks **I approve this controlled demo run**.
 2. Vercel verifies the user and claim, then sends only the claim context plus a generated run ID to the private worker.
 3. The worker creates a TinyFish Browser session, connects to its `cdp_url` with Playwright, and opens `returnmaze-demo.html`.
-4. It interacts only through the rendered `#message` field and Send button with six fixed messages: request the normal return path, identify the order, reject store credit, clarify evidence, request the policy basis, then request human escalation.
+4. Gemini reads each live ReturnMaze reply and plans the next allowed message. The worker validates every proposed message against a strict policy before it can use the rendered `#message` field and Send button. If Gemini is temporarily unavailable, a safe deterministic message keeps the demonstration usable.
 5. The worker returns a low-bandwidth live CDP screencast plus SSE progress and transcript events, so ClaimBack shows the remote browser while the conversation runs.
 6. The user may press **Esc** or **Stop demo**. The worker closes the CDP connection and stores a cancelled result.
 7. ClaimBack stores the transcript summary, result, and possible friction patterns in Supabase. No receipt content, login, payment, return label, or refund submission is sent to the demo.
@@ -55,6 +55,8 @@ Do **not** deploy `worker/` to Vercel: Vercel functions are short-lived, whereas
 TINYFISH_API_KEY=<your TinyFish key>
 TINYFISH_BROWSER_API_URL=https://api.browser.tinyfish.ai
 AGENT_WORKER_SECRET=<the same long random secret used in Vercel>
+GEMINI_API_KEY=<the same Gemini key used in Vercel>
+GEMINI_MODEL=gemini-3.8-flash
 ALLOWED_DEMO_ORIGIN=https://YOUR-CLAIMBACK-DOMAIN
 ```
 
