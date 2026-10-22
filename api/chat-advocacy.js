@@ -114,7 +114,9 @@ async function streamChat(res, { claim, auth, headers, saved, supportUrl, object
         url: supportUrl,
         goal: goalFor({ memory, supportUrl }),
         browser_profile: "lite",
-        agent_config: { mode: "strict", cursor_style: "fish", max_duration_seconds: 55 },
+        // `mode: strict` is beta-only on TinyFish. Keep this workflow on the
+        // standard agent so it works on accounts without beta access.
+        agent_config: { max_duration_seconds: 55 },
         capture_config: { screenshots: true, snapshots: true, recording: false, html: false },
         output_schema: { type: "object", properties: { status: { type: "string" }, summary: { type: "string" }, transcript: { type: "array", items: { type: "string" } }, dark_patterns: { type: "array", items: { type: "string" } }, next_user_action: { type: "string" }, last_message: { type: "string" } }, required: ["status", "summary", "next_user_action"] }
       })
